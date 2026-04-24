@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin, verifyStudioAccess, apiSuccess, apiError } from "@/lib/api-helpers";
 import { z } from "zod";
+import { randomBytes } from "crypto";
 
 const createStudentSchema = z.object({
   studioId: z.string().min(1),
@@ -67,13 +68,17 @@ export async function POST(req: NextRequest) {
   const hasAccess = await verifyStudioAccess(session!.user.id, studioId);
   if (!hasAccess) return apiError("Forbidden", 403);
 
-  // 이미 존재하는 유저 확인
   let user = await prisma.user.findUnique({ where: { email } });
 
+  if (user && user.role !== "STUDENT") {
+    return apiError("관리자 또는 선생님 계정은 원생으로 등록할 수 없습니다.", 409);
+  }
+
+  let tempPassword: string | null = null;
+
   if (!user) {
-    // 임시 비밀번호 (원생이 직접 변경해야 함)
     const bcrypt = await import("bcryptjs");
-    const tempPassword = Math.random().toString(36).slice(-8);
+    tempPassword = randomBytes(12).toString("base64url");
     const hashed = await bcrypt.hash(tempPassword, 12);
 
     user = await prisma.user.create({
@@ -87,7 +92,6 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // 이미 이 학원에 등록된 원생인지 확인
   const existingStudent = await prisma.student.findFirst({
     where: { userId: user.id, studioId },
   });
@@ -107,5 +111,14 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  return apiSuccess(student, 201);
+  return apiSuccess(
+    {
+      student,
+      temporaryPassword: tempPassword,
+      onboardingMessage: tempPassword
+        ? "원생에게 임시 비밀번호를 안전한 채널로 전달하고 로그인 후 변경하도록 안내하세요."
+        : "기존 원생 계정에 학원 등록을 추가했습니다.",
+    },
+    201
+  );
 }
