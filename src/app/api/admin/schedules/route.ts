@@ -45,13 +45,13 @@ export async function GET(req: NextRequest) {
     orderBy: { startAt: "asc" },
   });
 
-  // FullCalendar 형식으로 변환
   const events = schedules.map((s) => ({
     id: s.id,
     title: `${s.student.user.name} - ${s.lesson.title}`,
     start: s.startAt,
     end: s.endAt,
     backgroundColor: s.lesson.color ?? "#4F46E5",
+    borderColor: s.lesson.color ?? "#4F46E5",
     extendedProps: {
       lessonId: s.lessonId,
       studentId: s.studentId,
@@ -73,16 +73,42 @@ export async function POST(req: NextRequest) {
   const parsed = createScheduleSchema.safeParse(body);
   if (!parsed.success) return apiError("Validation failed", 400, parsed.error.flatten());
 
-  const hasAccess = await verifyStudioAccess(session!.user.id, parsed.data.studioId);
+  const { studioId, lessonId, studentId, startAt, endAt, memo } = parsed.data;
+  const start = new Date(startAt);
+  const end = new Date(endAt);
+
+  if (end <= start) return apiError("endAt must be after startAt", 400);
+
+  const hasAccess = await verifyStudioAccess(session!.user.id, studioId);
   if (!hasAccess) return apiError("Forbidden", 403);
+
+  const [lesson, student] = await Promise.all([
+    prisma.lesson.findFirst({ where: { id: lessonId, studioId } }),
+    prisma.student.findFirst({ where: { id: studentId, studioId, isActive: true } }),
+  ]);
+
+  if (!lesson) return apiError("해당 학원의 레슨이 아닙니다.", 400);
+  if (!student) return apiError("해당 학원의 원생이 아닙니다.", 400);
+
+  const overlap = await prisma.lessonSchedule.findFirst({
+    where: {
+      studentId,
+      status: { not: "CANCELLED" },
+      startAt: { lt: end },
+      endAt: { gt: start },
+    },
+    select: { id: true },
+  });
+
+  if (overlap) return apiError("해당 시간에 이미 등록된 원생 일정이 있습니다.", 409);
 
   const schedule = await prisma.lessonSchedule.create({
     data: {
-      lessonId: parsed.data.lessonId,
-      studentId: parsed.data.studentId,
-      startAt: new Date(parsed.data.startAt),
-      endAt: new Date(parsed.data.endAt),
-      memo: parsed.data.memo,
+      lessonId,
+      studentId,
+      startAt: start,
+      endAt: end,
+      memo,
     },
     include: {
       lesson: { select: { title: true, color: true } },
