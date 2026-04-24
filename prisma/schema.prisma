@@ -134,6 +134,7 @@ model Studio {
   practiceComments   PracticeComment[]
   practiceGoals      PracticeGoalSetting[]
 
+  @@index([adminId, isActive])
   @@map("studios")
 }
 
@@ -154,6 +155,7 @@ model StudioTeacher {
 
   @@unique([studioId, userId])
   @@index([studioId])
+  @@index([userId, isActive])
   @@map("studio_teachers")
 }
 
@@ -186,6 +188,7 @@ model Student {
   practiceRecordings PracticeRecording[]
   practiceGoals      PracticeGoalSetting[]
 
+  @@index([studioId, isActive])
   @@map("students")
 }
 
@@ -209,6 +212,7 @@ model Lesson {
   studio    Studio           @relation(fields: [studioId], references: [id])
   schedules LessonSchedule[]
 
+  @@index([studioId])
   @@map("lessons")
 }
 
@@ -232,6 +236,7 @@ model LessonSchedule {
 
   @@index([studentId, startAt])
   @@index([lessonId, startAt])
+  @@index([startAt, endAt])
   @@map("lesson_schedules")
 }
 
@@ -263,7 +268,9 @@ model Payment {
   student              Student             @relation(fields: [studentId], references: [id], onDelete: Cascade)
   kakaoNotifications   KakaoNotification[]
 
+  @@unique([studentId, billingMonth])
   @@index([studentId, billingMonth])
+  @@index([dueDate, status])
   @@map("payments")
 }
 
@@ -360,9 +367,6 @@ model Notice {
 // 피아노 연습 도메인 (Practice Domain)
 // ═══════════════════════════════════════════════════════════
 
-// ─────────────────────────────────────────────
-// 11. PRACTICE THREAD (날짜 단위 스레드)
-// ─────────────────────────────────────────────
 model PracticeThread {
   id        String   @id @default(cuid())
   studioId  String
@@ -383,9 +387,6 @@ model PracticeThread {
   @@map("practice_threads")
 }
 
-// ─────────────────────────────────────────────
-// 12. PRACTICE POST (타임라인 카드)
-// ─────────────────────────────────────────────
 model PracticePost {
   id        String      @id @default(cuid())
   threadId  String
@@ -428,9 +429,6 @@ enum ReviewResult {
   NG
 }
 
-// ─────────────────────────────────────────────
-// 13. PRACTICE RECORDING (최소용량 음원)
-// ─────────────────────────────────────────────
 model PracticeRecording {
   id        String   @id @default(cuid())
   postId    String
@@ -453,9 +451,6 @@ model PracticeRecording {
   @@map("practice_recordings")
 }
 
-// ─────────────────────────────────────────────
-// 14. PRACTICE COMMENT (교사 지시 + Q&A)
-// ─────────────────────────────────────────────
 model PracticeComment {
   id           String   @id @default(cuid())
   studioId     String
@@ -492,9 +487,6 @@ enum PracticeCommentType {
   ANSWER
 }
 
-// ─────────────────────────────────────────────
-// 15. PRACTICE GOAL SETTING (주간 목표)
-// ─────────────────────────────────────────────
 model PracticeGoalSetting {
   id              String   @id @default(cuid())
   studioId        String
