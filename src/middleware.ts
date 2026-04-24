@@ -5,7 +5,6 @@ import { getToken } from "next-auth/jwt";
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // 공개 경로 (인증 불필요)
   if (
     pathname.startsWith("/login") ||
     pathname.startsWith("/register") ||
@@ -17,14 +16,17 @@ export async function middleware(req: NextRequest) {
   }
 
   const secret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET ?? "";
-
   const token = await getToken({
     req,
     secret,
-    cookieName: "authjs.session-token",
+    secureCookie: process.env.NODE_ENV === "production",
   });
 
   if (!token) {
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const loginUrl = new URL("/login", req.url);
     loginUrl.searchParams.set("callbackUrl", pathname);
     return NextResponse.redirect(loginUrl);
@@ -32,40 +34,36 @@ export async function middleware(req: NextRequest) {
 
   const role = token.role as string | undefined;
 
-  // 관리자 전용 경로
   if (pathname.startsWith("/admin")) {
     if (role !== "ADMIN") {
-      if (role === "TEACHER") {
-        return NextResponse.redirect(new URL("/teacher/dashboard", req.url));
-      }
+      if (role === "TEACHER") return NextResponse.redirect(new URL("/teacher/dashboard", req.url));
       return NextResponse.redirect(new URL("/student/dashboard", req.url));
     }
   }
 
-  // 선생님 전용 경로
   if (pathname.startsWith("/teacher")) {
     if (role !== "TEACHER") {
-      if (role === "ADMIN") {
-        return NextResponse.redirect(new URL("/admin/dashboard", req.url));
-      }
+      if (role === "ADMIN") return NextResponse.redirect(new URL("/admin/dashboard", req.url));
       return NextResponse.redirect(new URL("/student/dashboard", req.url));
     }
   }
 
-  // 원생 전용 경로
   if (pathname.startsWith("/student")) {
     if (role !== "STUDENT") {
-      if (role === "ADMIN") {
-        return NextResponse.redirect(new URL("/admin/dashboard", req.url));
-      }
-      if (role === "TEACHER") {
-        return NextResponse.redirect(new URL("/teacher/dashboard", req.url));
-      }
+      if (role === "ADMIN") return NextResponse.redirect(new URL("/admin/dashboard", req.url));
+      if (role === "TEACHER") return NextResponse.redirect(new URL("/teacher/dashboard", req.url));
     }
   }
 
-  // API 경로 보호 - teacher API
+  if (pathname.startsWith("/api/admin") && role !== "ADMIN") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   if (pathname.startsWith("/api/teacher") && role !== "TEACHER" && role !== "ADMIN") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  if (pathname.startsWith("/api/student") && role !== "STUDENT") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
