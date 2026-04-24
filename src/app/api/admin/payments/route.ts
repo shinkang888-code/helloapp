@@ -6,7 +6,7 @@ import { z } from "zod";
 const createPaymentSchema = z.object({
   studentId: z.string().min(1),
   studioId: z.string().min(1),
-  amount: z.number().positive(),
+  amount: z.number().int().positive(),
   billingMonth: z.string().regex(/^\d{4}-\d{2}$/),
   dueDate: z.string().datetime(),
   memo: z.string().optional(),
@@ -43,24 +43,16 @@ export async function GET(req: NextRequest) {
     orderBy: [{ billingMonth: "desc" }, { dueDate: "asc" }],
   });
 
-  // 연체 자동 업데이트
   const now = new Date();
-  const overdueIds = payments
-    .filter((p) => p.status === "PENDING" && p.dueDate < now)
-    .map((p) => p.id);
+  const normalizedPayments = payments.map((payment) => ({
+    ...payment,
+    computedStatus:
+      payment.status === "PENDING" && payment.dueDate < now
+        ? "OVERDUE"
+        : payment.status,
+  }));
 
-  if (overdueIds.length > 0) {
-    await prisma.payment.updateMany({
-      where: { id: { in: overdueIds } },
-      data: { status: "OVERDUE" },
-    });
-    overdueIds.forEach((id) => {
-      const p = payments.find((x) => x.id === id);
-      if (p) p.status = "OVERDUE";
-    });
-  }
-
-  return apiSuccess(payments);
+  return apiSuccess(normalizedPayments);
 }
 
 // POST /api/admin/payments — 수강료 생성
@@ -72,16 +64,30 @@ export async function POST(req: NextRequest) {
   const parsed = createPaymentSchema.safeParse(body);
   if (!parsed.success) return apiError("Validation failed", 400, parsed.error.flatten());
 
-  const hasAccess = await verifyStudioAccess(session!.user.id, parsed.data.studioId);
+  const { studioId, studentId, amount, billingMonth, dueDate, memo } = parsed.data;
+
+  const hasAccess = await verifyStudioAccess(session!.user.id, studioId);
   if (!hasAccess) return apiError("Forbidden", 403);
+
+  const student = await prisma.student.findFirst({
+    where: { id: studentId, studioId, isActive: true },
+    select: { id: true },
+  });
+  if (!student) return apiError("해당 학원의 원생이 아닙니다.", 400);
+
+  const existing = await prisma.payment.findFirst({
+    where: { studentId, billingMonth },
+    select: { id: true },
+  });
+  if (existing) return apiError("이미 해당 월 수강료가 등록되어 있습니다.", 409);
 
   const payment = await prisma.payment.create({
     data: {
-      studentId: parsed.data.studentId,
-      amount: parsed.data.amount,
-      billingMonth: parsed.data.billingMonth,
-      dueDate: new Date(parsed.data.dueDate),
-      memo: parsed.data.memo,
+      studentId,
+      amount,
+      billingMonth,
+      dueDate: new Date(dueDate),
+      memo,
     },
     include: {
       student: { include: { user: { select: { name: true } } } },
